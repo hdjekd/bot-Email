@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # MR_Email_Bot_Ultimate.py
-# بوت MR Email - بريد مؤقت خارق (مخفي المصادر بالكامل) مع نظام تسجيل ومراقبة وحماية
+# بوت MR Email - بريد مؤقت خارق مع حل مشكلة الاتصال
 
 import logging
 import sqlite3
@@ -18,6 +18,8 @@ from flask_cors import CORS
 
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
+from telegram.request import HTTPXRequest
+import httpx
 
 # ================= إعداد Flask للمراقبة =================
 monitor_app = Flask(__name__)
@@ -40,10 +42,33 @@ BOT_STATUS = {
 # ================= إعدادات المطور =================
 DEV_ID = 8311254462  # معرف المطور @MR_Tails_YE
 
-# كاش للدومينات (تحسين الأداء)
+# كاش للدومينات
 _cached_domains = None
 
-# ================= قالب HTML للوحة التحكم (مخفي المصادر) =================
+# ================= إعداد HTTPX Request مع Timeout أطول فقط (بدون Proxy) =================
+def create_telegram_request():
+    """إنشاء طلب HTTPX مع Timeout أطول لحل مشكلة TimedOut"""
+    try:
+        # طريقة 1: استخدام HTTPXRequest المباشر مع timeout (للمكتبات الحديثة)
+        return HTTPXRequest(
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=30.0,
+        )
+    except TypeError:
+        try:
+            # طريقة 2: استخدام HTTPXRequest مع параметр timeout
+            return HTTPXRequest(timeout=30.0)
+        except TypeError:
+            try:
+                # طريقة 3: استخدام HTTPXRequest بدون parameters
+                return HTTPXRequest()
+            except:
+                # طريقة 4: استخدام None (الإعدادات الافتراضية)
+                return None
+
+# ================= قالب HTML =================
 DASHBOARD_HTML = '''
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -271,7 +296,7 @@ DASHBOARD_HTML = '''
 </html>
 '''
 
-# ================= نقاط نهاية Flask للمراقبة =================
+# ================= نقاط نهاية Flask =================
 @monitor_app.route('/')
 def dashboard():
     return render_template_string(DASHBOARD_HTML)
@@ -320,8 +345,16 @@ def update_bot_stats():
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM users WHERE banned = 0")
-            BOT_STATUS["total_users"] = cursor.fetchone()[0]
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            if 'banned' in columns:
+                cursor.execute("SELECT COUNT(*) FROM users WHERE banned = 0")
+                BOT_STATUS["total_users"] = cursor.fetchone()[0]
+            else:
+                cursor.execute("SELECT COUNT(*) FROM users")
+                BOT_STATUS["total_users"] = cursor.fetchone()[0]
+            
             cursor.execute("SELECT COUNT(*) FROM emails")
             BOT_STATUS["total_emails"] = cursor.fetchone()[0]
             cursor.execute("SELECT COUNT(*) FROM inbox")
@@ -347,7 +380,7 @@ def check_apis_status():
             log.error(f"API check error: {e}")
         time.sleep(30)
 
-# ================= إصلاح مشكلة التسجيل (logging) =================
+# ================= إعداد التسجيل =================
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 log = logging.getLogger(__name__)
 
@@ -362,7 +395,7 @@ RESET = '\033[0m'
 # ================= توكن البوت =================
 TOKEN = "8513010794:AAH9_FatomlJIIPbCBajnYuRhYy2BcqwBxY"
 
-# ================= جميع الدومينات (27 دومين) =================
+# ================= الدومينات =================
 SOURCE1_DOMAINS = [
     "mailto.plus", "fexpost.com", "fexbox.org", "mailbok.in.ua",
     "chitthi.in", "fextemp.com", "any.pink", "merepost.com"
@@ -480,7 +513,7 @@ def src2_delete_email(email: str) -> bool:
     except:
         return False
 
-# ================= الحصول على قائمة الدومينات (مع كاش) =================
+# ================= الدومينات =================
 def get_all_domains() -> List[str]:
     global _cached_domains
     if _cached_domains is None:
@@ -499,12 +532,11 @@ def get_source_from_domain(domain: str) -> Optional[str]:
         return "src2"
     return None
 
-# ================= قاعدة البيانات الرئيسية =================
+# ================= قاعدة البيانات =================
 DB_PATH = "mr_email_bot.db"
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
-        # جدول المستخدمين مع إضافة حقل banned
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 telegram_id INTEGER PRIMARY KEY,
@@ -543,6 +575,39 @@ def init_db():
         """)
         conn.commit()
 
+def migrate_db():
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            if 'banned' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
+                print("✅ تم إضافة عمود banned")
+            
+            if 'phone' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+                print("✅ تم إضافة عمود phone")
+            
+            if 'name' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN name TEXT")
+                print("✅ تم إضافة عمود name")
+            
+            if 'username' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+                print("✅ تم إضافة عمود username")
+            
+            if 'reg_date' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN reg_date TEXT")
+                print("✅ تم إضافة عمود reg_date")
+            
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"⚠️ خطأ في تحديث قاعدة البيانات: {e}")
+        return False
+
 @contextmanager
 def db_cursor():
     conn = sqlite3.connect(DB_PATH)
@@ -553,66 +618,88 @@ def db_cursor():
     finally:
         conn.close()
 
-# ================= دوال المستخدمين والتسجيل =================
+# ================= دوال المستخدمين =================
 def is_user_registered(telegram_id: int) -> bool:
-    """التحقق من تسجيل المستخدم وغير محظور"""
     with db_cursor() as cur:
-        cur.execute("SELECT telegram_id FROM users WHERE telegram_id = ? AND banned = 0", (telegram_id,))
-        return cur.fetchone() is not None
+        try:
+            cur.execute("SELECT telegram_id FROM users WHERE telegram_id = ? AND banned = 0", (telegram_id,))
+            return cur.fetchone() is not None
+        except sqlite3.OperationalError:
+            cur.execute("SELECT telegram_id FROM users WHERE telegram_id = ?", (telegram_id,))
+            return cur.fetchone() is not None
 
 def is_user_banned(telegram_id: int) -> bool:
-    """التحقق من حظر المستخدم"""
     with db_cursor() as cur:
-        cur.execute("SELECT banned FROM users WHERE telegram_id = ?", (telegram_id,))
-        row = cur.fetchone()
-        return row is not None and row["banned"] == 1
+        try:
+            cur.execute("SELECT banned FROM users WHERE telegram_id = ?", (telegram_id,))
+            row = cur.fetchone()
+            return row is not None and row["banned"] == 1
+        except sqlite3.OperationalError:
+            return False
 
 def register_user(telegram_id: int, name: str, username: str, phone: str, reg_date: str):
-    """تسجيل مستخدم جديد - لا يغير حالة الحظر"""
     with db_cursor() as cur:
-        # التحقق من وجود المستخدم
-        cur.execute("SELECT banned FROM users WHERE telegram_id = ?", (telegram_id,))
-        existing = cur.fetchone()
-        
-        if existing:
-            # تحديث البيانات مع الاحتفاظ بحالة الحظر
+        try:
+            cur.execute("SELECT banned FROM users WHERE telegram_id = ?", (telegram_id,))
+            existing = cur.fetchone()
+            
+            if existing:
+                cur.execute("""
+                    UPDATE users 
+                    SET name = ?, username = ?, phone = ?, reg_date = ?
+                    WHERE telegram_id = ?
+                """, (name, username, phone, reg_date, telegram_id))
+            else:
+                cur.execute("""
+                    INSERT INTO users (telegram_id, name, username, phone, reg_date, banned)
+                    VALUES (?, ?, ?, ?, ?, 0)
+                """, (telegram_id, name, username, phone, reg_date))
+        except sqlite3.OperationalError:
             cur.execute("""
-                UPDATE users 
-                SET name = ?, username = ?, phone = ?, reg_date = ?
-                WHERE telegram_id = ?
-            """, (name, username, phone, reg_date, telegram_id))
-        else:
-            # إدراج مستخدم جديد (غير محظور)
-            cur.execute("""
-                INSERT INTO users (telegram_id, name, username, phone, reg_date, banned)
-                VALUES (?, ?, ?, ?, ?, 0)
+                INSERT OR REPLACE INTO users (telegram_id, name, username, phone, reg_date)
+                VALUES (?, ?, ?, ?, ?)
             """, (telegram_id, name, username, phone, reg_date))
     update_bot_stats()
 
 def get_user_data(telegram_id: int) -> Optional[Dict]:
-    """جلب بيانات مستخدم"""
     with db_cursor() as cur:
         cur.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
         row = cur.fetchone()
         return dict(row) if row else None
 
 def get_all_users() -> List[Dict]:
-    """جلب جميع المستخدمين"""
     with db_cursor() as cur:
-        cur.execute("SELECT telegram_id, name, username, phone, reg_date, banned FROM users ORDER BY reg_date DESC")
+        try:
+            cur.execute("SELECT telegram_id, name, username, phone, reg_date, banned FROM users ORDER BY reg_date DESC")
+        except sqlite3.OperationalError:
+            cur.execute("SELECT telegram_id, name, username, phone, reg_date FROM users ORDER BY reg_date DESC")
+            users = []
+            for row in cur.fetchall():
+                u = dict(row)
+                u["banned"] = 0
+                users.append(u)
+            return users
         return [dict(row) for row in cur.fetchall()]
 
 def ban_user(telegram_id: int) -> bool:
-    """حظر مستخدم"""
     with db_cursor() as cur:
-        cur.execute("UPDATE users SET banned = 1 WHERE telegram_id = ?", (telegram_id,))
-        return cur.rowcount > 0
+        try:
+            cur.execute("UPDATE users SET banned = 1 WHERE telegram_id = ?", (telegram_id,))
+            return cur.rowcount > 0
+        except sqlite3.OperationalError:
+            cur.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
+            cur.execute("UPDATE users SET banned = 1 WHERE telegram_id = ?", (telegram_id,))
+            return True
 
 def unban_user(telegram_id: int) -> bool:
-    """إلغاء حظر مستخدم"""
     with db_cursor() as cur:
-        cur.execute("UPDATE users SET banned = 0 WHERE telegram_id = ?", (telegram_id,))
-        return cur.rowcount > 0
+        try:
+            cur.execute("UPDATE users SET banned = 0 WHERE telegram_id = ?", (telegram_id,))
+            return cur.rowcount > 0
+        except sqlite3.OperationalError:
+            cur.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
+            cur.execute("UPDATE users SET banned = 0 WHERE telegram_id = ?", (telegram_id,))
+            return True
 
 def get_user_lang(telegram_id: int) -> str:
     with db_cursor() as cur:
@@ -649,7 +736,6 @@ def save_inbox_message(telegram_id: int, email: str, source: str, from_email: st
         """, (telegram_id, email, source, from_email, subject, body, uid, mid))
     update_bot_stats()
 
-# رسالة الحظر الثابتة (لكل اللغات)
 BAN_MESSAGE = """🚫 *لقد تم حظرك من استخدام البوت*
 
 ⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎
@@ -663,13 +749,13 @@ def get_domains_list_text(uid: int) -> str:
     domains = get_all_domains()
     domains_text = "\n".join([f"• {d}" for d in domains])
     if lang == "ar":
-        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ أرسل بريدك المخصص بالصيغة (مثال: `myself@blondmail.com`):\n\n💡 *الدومينات المتاحة:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪"
+        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ أرسل بريدك المخصص بالصيغة (مثال: `myself@blondmail.com`):\n\n💡 *الدومينات المتاحة:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪"
     else:
-        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ Send your custom email (e.g., `myself@blondmail.com`):\n\n💡 *Available Domains:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪"
+        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ Send your custom email (e.g., `myself@blondmail.com`):\n\n💡 *Available Domains:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪"
 
 TEXTS = {
     "ar": {
-        "welcome": f"✨ مرحباً بك في بوت MR Email!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nبريد مؤقت خارق يدعم العديد من الدومينات.\nDEV: @MR_Tails_YE",
+        "welcome": "✨ مرحباً بك في بوت MR Email!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nبريد مؤقت خارق يدعم العديد من الدومينات.\nDEV: @MR_Tails_YE",
         "need_phone": "📱 *يرجى تسجيل رقم هاتفك أولاً*\n\nاستخدم الأمر /phone لمشاركة رقم هاتفك والتحقق من حسابك.",
         "banned": BAN_MESSAGE,
         "phone_prompt": "📱 *يرجى مشاركة رقم هاتفك للتحقق من حسابك*\n\nاضغط على الزر أدناه لمشاركة رقم هاتفك.",
@@ -712,13 +798,13 @@ TEXTS = {
         "dev_unban_fail": "❌ فشل إلغاء حظر المستخدم. تأكد من أن المعرف صحيح.",
         "dev_all_data": "📊 *جميع بيانات المستخدمين*\n\n{data}",
         "btn_users_count": "👥 عدد المستخدمين",
-        "btn_ban_user": "🚫 حذف مستخدم",
-        "btn_unban_user": "✅ إضافة مستخدم محذوف",
+        "btn_ban_user": "🚫 حظر مستخدم",
+        "btn_unban_user": "✅ إلغاء حظر مستخدم",
         "btn_all_data": "📊 جميع البيانات",
         "btn_back": "🔙 رجوع"
     },
     "en": {
-        "welcome": f"✨ Welcome to MR Email Bot!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nPowerful temporary email with many domains.\nDEV: @MR_Tails_YE",
+        "welcome": "✨ Welcome to MR Email Bot!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nPowerful temporary email with many domains.\nDEV: @MR_Tails_YE",
         "need_phone": "📱 *Please register your phone number first*\n\nUse /phone command to share your phone number and verify your account.",
         "banned": BAN_MESSAGE,
         "phone_prompt": "📱 *Please share your phone number to verify your account*\n\nTap the button below to share your phone number.",
@@ -773,9 +859,8 @@ def get_text(telegram_id: int, key: str, **kwargs) -> str:
     text = TEXTS.get(lang, TEXTS["en"]).get(key, key)
     return text.format(**kwargs) if kwargs else text
 
-# ================= أوامر البوت (العامة) =================
+# ================= أوامر البوت =================
 async def set_commands(app: Application):
-    # فقط الأوامر العامة تظهر للجميع
     commands = [
         BotCommand("start", "Start MR Email Bot"),
         BotCommand("phone", "Register your phone number"),
@@ -841,7 +926,6 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = get_text(uid, "phone_saved", name=name, username=f"@{username}" if username != "No Username" else username, phone=phone, date=reg_date)
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=remove_keyboard)
 
-# ================= أوامر المطور (مخفية - لا تظهر في قائمة الأوامر) =================
 async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     
@@ -878,7 +962,7 @@ async def my_developer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(get_text(uid, "dev_panel"), reply_markup=reply_markup, parse_mode="Markdown")
 
-# ================= أوامر البريد المؤقت (مع التحقق من الحظر والتسجيل) =================
+# ================= أوامر البريد المؤقت =================
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     BOT_STATUS["last_activity"] = datetime.now()
@@ -1117,7 +1201,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BOT_STATUS["last_activity"] = datetime.now()
     data = query.data
     
-    # للمستخدمين المحظورين (ما عدا المطور)
     if uid != DEV_ID and is_user_banned(uid):
         await query.edit_message_text(BAN_MESSAGE, parse_mode="Markdown")
         return
@@ -1145,18 +1228,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(get_text(uid, "welcome"))
         return
 
-    # ================= دوال المطور =================
     if uid == DEV_ID:
         if data == "dev_users_count":
             users = get_all_users()
-            total = len([u for u in users if u["banned"] == 0])
-            banned = len([u for u in users if u["banned"] == 1])
+            total = len([u for u in users if u.get("banned", 0) == 0])
+            banned = len([u for u in users if u.get("banned", 0) == 1])
             
             if users:
                 users_list = ""
                 for u in users[:20]:
-                    status = "🚫" if u["banned"] == 1 else "✅"
-                    users_list += f"{status} `{u['telegram_id']}` - {u['name']}\n"
+                    status = "🚫" if u.get("banned", 0) == 1 else "✅"
+                    users_list += f"{status} `{u['telegram_id']}` - {u.get('name', 'Unknown')}\n"
                 
                 text = get_text(uid, "dev_users_list", total=total, users_list=users_list)
                 text += f"\n\n🚫 المحظورين: {banned}"
@@ -1182,11 +1264,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data_text = ""
                 for u in users:
                     data_text += f"🆔 {u['telegram_id']}\n"
-                    data_text += f"📛 {u['name']}\n"
-                    data_text += f"🔖 {u['username']}\n"
-                    data_text += f"📞 {u['phone']}\n"
-                    data_text += f"📅 {u['reg_date']}\n"
-                    data_text += f"{'🚫 محظور' if u['banned'] == 1 else '✅ نشط'}\n"
+                    data_text += f"📛 {u.get('name', 'Unknown')}\n"
+                    data_text += f"🔖 {u.get('username', 'No Username')}\n"
+                    data_text += f"📞 {u.get('phone', 'No Phone')}\n"
+                    data_text += f"📅 {u.get('reg_date', 'Unknown')}\n"
+                    data_text += f"{'🚫 محظور' if u.get('banned', 0) == 1 else '✅ نشط'}\n"
                     data_text += "─" * 20 + "\n"
                 
                 await query.edit_message_text(get_text(uid, "dev_all_data", data=data_text), parse_mode="Markdown")
@@ -1194,7 +1276,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(get_text(uid, "dev_no_users"))
             return
 
-    # ================= باقي الكود للبريد المؤقت =================
     if not is_user_registered(uid):
         await query.edit_message_text(get_text(uid, "need_phone"))
         return
@@ -1327,7 +1408,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.edit_message_text(get_text(uid, "delete_fail"))
                 return
 
-# ================= معالجة رسائل المطور (حظر/إلغاء حظر) =================
 async def handle_dev_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     
@@ -1356,7 +1436,10 @@ async def handle_dev_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "unban":
             if unban_user(target_id):
                 await update.message.reply_text(f"✅ تم إلغاء حظر المستخدم `{target_id}` بنجاح")
-                await context.bot.send_message(target_id, "✅ تم إلغاء حظرك يمكنك استخدام البوت مرة أخرى")
+                try:
+                    await context.bot.send_message(target_id, "✅ تم إلغاء حظرك يمكنك استخدام البوت مرة أخرى")
+                except:
+                    pass
             else:
                 await update.message.reply_text(f"❌ فشل إلغاء حظر المستخدم `{target_id}`")
         
@@ -1364,7 +1447,6 @@ async def handle_dev_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= التشغيل =================
 def main():
-    # طباعة البانر الجبار
     print(f"""{Y}
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
@@ -1397,10 +1479,14 @@ def main():
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute("SELECT lang FROM users LIMIT 1")
+                print("✅ قاعدة البيانات موجودة، يتم التحقق من هيكلها...")
+                migrate_db()
         except sqlite3.OperationalError:
-            print("⚠️ قاعدة البيانات قديمة، سيتم إنشاء جديدة.")
+            print("⚠️ قاعدة البيانات قديمة جداً، سيتم إنشاء جديدة.")
             os.remove(DB_PATH)
-    init_db()
+            init_db()
+    else:
+        init_db()
     
     update_bot_stats()
 
@@ -1412,10 +1498,17 @@ def main():
     api_check_thread.start()
     print(f"{G}✅ API monitoring started (sources hidden){RESET}")
 
-    app = Application.builder().token(TOKEN).build()
+    # إنشاء التطبيق مع إعدادات timeout محسنة
+    telegram_request = create_telegram_request()
+    
+    if telegram_request:
+        app = Application.builder().token(TOKEN).request(telegram_request).build()
+    else:
+        app = Application.builder().token(TOKEN).build()
+        print(f"{Y}⚠️ باستخدام الإعدادات الافتراضية للاتصال{RESET}")
+    
     app.post_init = set_commands
 
-    # أوامر البوت العامة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("phone", phone_command))
     app.add_handler(CommandHandler("generate", generate))
@@ -1427,11 +1520,9 @@ def main():
     app.add_handler(CommandHandler("domains", domains))
     app.add_handler(CommandHandler("language", language))
     
-    # أوامر المطور (مخفية - لا تظهر في قائمة الأوامر)
     app.add_handler(CommandHandler("Mydeveloper", my_developer))
     app.add_handler(CommandHandler("monitor", monitor))
     
-    # معالجات إضافية
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.TEXT & filters.COMMAND, handle_dev_text))
@@ -1442,7 +1533,11 @@ def main():
     print(f"{C}📊 Monitor URL: http://localhost:8080{RESET}")
     print(f"{Y}💡 Users must register with /phone first{RESET}\n")
     
-    app.run_polling()
+    try:
+        app.run_polling()
+    except Exception as e:
+        print(f"{R}❌ خطأ في تشغيل البوت: {e}{RESET}")
+        print(f"{Y}⚠️ تأكد من اتصال الإنترنت وعدم حظر التطبيق{RESET}")
 
 if __name__ == "__main__":
     main()
