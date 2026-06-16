@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # MR_Email_Bot_Ultimate.py
-# بوت MR Email - بريد مؤقت خارق مع حل مشكلة الاتصال
+# بوت MR Email - بريد مؤقت خارق (مخفي المصادر بالكامل) مع نظام تسجيل ومراقبة وحماية
+# الإصدار 5.0 - تحديث جبار بالأزرار التفاعلية ونظام الحظر المتطور
 
 import logging
 import sqlite3
@@ -18,8 +19,6 @@ from flask_cors import CORS
 
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
-from telegram.request import HTTPXRequest
-import httpx
 
 # ================= إعداد Flask للمراقبة =================
 monitor_app = Flask(__name__)
@@ -42,33 +41,13 @@ BOT_STATUS = {
 # ================= إعدادات المطور =================
 DEV_ID = 8311254462  # معرف المطور @MR_Tails_YE
 
-# كاش للدومينات
+# كاش للدومينات (تحسين الأداء)
 _cached_domains = None
 
-# ================= إعداد HTTPX Request مع Timeout أطول فقط (بدون Proxy) =================
-def create_telegram_request():
-    """إنشاء طلب HTTPX مع Timeout أطول لحل مشكلة TimedOut"""
-    try:
-        # طريقة 1: استخدام HTTPXRequest المباشر مع timeout (للمكتبات الحديثة)
-        return HTTPXRequest(
-            connect_timeout=30.0,
-            read_timeout=30.0,
-            write_timeout=30.0,
-            pool_timeout=30.0,
-        )
-    except TypeError:
-        try:
-            # طريقة 2: استخدام HTTPXRequest مع параметр timeout
-            return HTTPXRequest(timeout=30.0)
-        except TypeError:
-            try:
-                # طريقة 3: استخدام HTTPXRequest بدون parameters
-                return HTTPXRequest()
-            except:
-                # طريقة 4: استخدام None (الإعدادات الافتراضية)
-                return None
+# متغير لتتبع ما إذا كان المستخدم في مرحلة اختيار اللغة
+user_lang_pending = {}
 
-# ================= قالب HTML =================
+# ================= قالب HTML للوحة التحكم =================
 DASHBOARD_HTML = '''
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -296,7 +275,7 @@ DASHBOARD_HTML = '''
 </html>
 '''
 
-# ================= نقاط نهاية Flask =================
+# ================= نقاط نهاية Flask للمراقبة =================
 @monitor_app.route('/')
 def dashboard():
     return render_template_string(DASHBOARD_HTML)
@@ -310,7 +289,7 @@ def health():
     return jsonify({
         "status": "ok" if BOT_STATUS["running"] else "down",
         "bot": "running" if BOT_STATUS["running"] else "stopped",
-        "version": "4.0",
+        "version": "5.0",
         "timestamp": int(time.time()),
         "uptime": f"{hours}h {minutes}m",
         "stats": {
@@ -395,7 +374,7 @@ RESET = '\033[0m'
 # ================= توكن البوت =================
 TOKEN = "8513010794:AAH9_FatomlJIIPbCBajnYuRhYy2BcqwBxY"
 
-# ================= الدومينات =================
+# ================= جميع الدومينات =================
 SOURCE1_DOMAINS = [
     "mailto.plus", "fexpost.com", "fexbox.org", "mailbok.in.ua",
     "chitthi.in", "fextemp.com", "any.pink", "merepost.com"
@@ -513,7 +492,7 @@ def src2_delete_email(email: str) -> bool:
     except:
         return False
 
-# ================= الدومينات =================
+# ================= الحصول على قائمة الدومينات (مع كاش) =================
 def get_all_domains() -> List[str]:
     global _cached_domains
     if _cached_domains is None:
@@ -532,7 +511,7 @@ def get_source_from_domain(domain: str) -> Optional[str]:
         return "src2"
     return None
 
-# ================= قاعدة البيانات =================
+# ================= قاعدة البيانات الرئيسية =================
 DB_PATH = "mr_email_bot.db"
 
 def init_db():
@@ -618,7 +597,7 @@ def db_cursor():
     finally:
         conn.close()
 
-# ================= دوال المستخدمين =================
+# ================= دوال المستخدمين والتسجيل =================
 def is_user_registered(telegram_id: int) -> bool:
     with db_cursor() as cur:
         try:
@@ -681,7 +660,17 @@ def get_all_users() -> List[Dict]:
             return users
         return [dict(row) for row in cur.fetchall()]
 
+def get_active_users() -> List[Dict]:
+    users = get_all_users()
+    return [u for u in users if u.get("banned", 0) == 0 and u["telegram_id"] != DEV_ID]
+
+def get_banned_users() -> List[Dict]:
+    users = get_all_users()
+    return [u for u in users if u.get("banned", 0) == 1 and u["telegram_id"] != DEV_ID]
+
 def ban_user(telegram_id: int) -> bool:
+    if telegram_id == DEV_ID:
+        return False
     with db_cursor() as cur:
         try:
             cur.execute("UPDATE users SET banned = 1 WHERE telegram_id = ?", (telegram_id,))
@@ -736,6 +725,7 @@ def save_inbox_message(telegram_id: int, email: str, source: str, from_email: st
         """, (telegram_id, email, source, from_email, subject, body, uid, mid))
     update_bot_stats()
 
+# رسالة الحظر الثابتة
 BAN_MESSAGE = """🚫 *لقد تم حظرك من استخدام البوت*
 
 ⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎
@@ -749,13 +739,13 @@ def get_domains_list_text(uid: int) -> str:
     domains = get_all_domains()
     domains_text = "\n".join([f"• {d}" for d in domains])
     if lang == "ar":
-        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ أرسل بريدك المخصص بالصيغة (مثال: `myself@blondmail.com`):\n\n💡 *الدومينات المتاحة:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪"
+        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ أرسل بريدك المخصص بالصيغة (مثال: `myself@blondmail.com`):\n\n💡 *الدومينات المتاحة:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪"
     else:
-        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ Send your custom email (e.g., `myself@blondmail.com`):\n\n💡 *Available Domains:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪"
+        return f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✍️ Send your custom email (e.g., `myself@blondmail.com`):\n\n💡 *Available Domains:*\n{domains_text}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪🇾🇪"
 
 TEXTS = {
     "ar": {
-        "welcome": "✨ مرحباً بك في بوت MR Email!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nبريد مؤقت خارق يدعم العديد من الدومينات.\nDEV: @MR_Tails_YE",
+        "welcome": f"✨ مرحباً بك في بوت MR Email!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nبريد مؤقت خارق يدعم العديد من الدومينات.\nDEV: @MR_Tails_YE",
         "need_phone": "📱 *يرجى تسجيل رقم هاتفك أولاً*\n\nاستخدم الأمر /phone لمشاركة رقم هاتفك والتحقق من حسابك.",
         "banned": BAN_MESSAGE,
         "phone_prompt": "📱 *يرجى مشاركة رقم هاتفك للتحقق من حسابك*\n\nاضغط على الزر أدناه لمشاركة رقم هاتفك.",
@@ -790,21 +780,30 @@ TEXTS = {
         "dev_panel": "👑 *لوحة تحكم المطور*\n\nمرحباً أيها المطور العظيم!\n\nاختر أحد الخيارات أدناه:",
         "dev_users_list": "👥 *قائمة المستخدمين*\n\nإجمالي المستخدمين: {total}\n\n{users_list}",
         "dev_no_users": "📭 لا يوجد مستخدمين مسجلين.",
-        "dev_ban_prompt": "🚫 *حظر مستخدم*\n\nأرسل معرف المستخدم (ID) الذي تريد حظره:",
-        "dev_unban_prompt": "✅ *إلغاء حظر مستخدم*\n\nأرسل معرف المستخدم (ID) الذي تريد إلغاء حظره:",
         "dev_ban_success": "✅ تم حظر المستخدم `{user_id}` بنجاح.",
-        "dev_ban_fail": "❌ فشل حظر المستخدم. تأكد من أن المعرف صحيح.",
+        "dev_ban_fail": "❌ فشل حظر المستخدم.",
         "dev_unban_success": "✅ تم إلغاء حظر المستخدم `{user_id}` بنجاح.",
-        "dev_unban_fail": "❌ فشل إلغاء حظر المستخدم. تأكد من أن المعرف صحيح.",
+        "dev_unban_fail": "❌ فشل إلغاء حظر المستخدم.",
         "dev_all_data": "📊 *جميع بيانات المستخدمين*\n\n{data}",
         "btn_users_count": "👥 عدد المستخدمين",
         "btn_ban_user": "🚫 حظر مستخدم",
         "btn_unban_user": "✅ إلغاء حظر مستخدم",
         "btn_all_data": "📊 جميع البيانات",
-        "btn_back": "🔙 رجوع"
+        "btn_back": "🔙 رجوع",
+        "select_user": "👤 اختر المستخدم:",
+        "confirm_ban": "⚠️ هل تريد حظر المستخدم {user_info}؟",
+        "confirm_unban": "⚠️ هل تريد إلغاء حظر المستخدم {user_info}؟",
+        "confirm_yes": "✅ نعم",
+        "confirm_no": "❌ لا",
+        "user_banned_success": "✅ تم حظر المستخدم {user_info} بنجاح",
+        "user_unbanned_success": "✅ تم إلغاء حظر المستخدم {user_info} بنجاح",
+        "user_details": "📋 *بيانات المستخدم*\n\n🆔 المعرف: {id}\n📛 الاسم: {name}\n🔖 اليوزر: {username}\n📞 الهاتف: {phone}\n📅 التسجيل: {date}\n{'🚫 محظور' if banned else '✅ نشط'}",
+        "click_message_button": "📨 اضغط على أي زر لعرض تفاصيل الرسالة",
+        "view_message": "📄 رسالة من {from_addr}",
+        "no_messages_inbox": "📭 لا توجد رسائل في هذا البريد"
     },
     "en": {
-        "welcome": "✨ Welcome to MR Email Bot!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nPowerful temporary email with many domains.\nDEV: @MR_Tails_YE",
+        "welcome": f"✨ Welcome to MR Email Bot!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nPowerful temporary email with many domains.\nDEV: @MR_Tails_YE",
         "need_phone": "📱 *Please register your phone number first*\n\nUse /phone command to share your phone number and verify your account.",
         "banned": BAN_MESSAGE,
         "phone_prompt": "📱 *Please share your phone number to verify your account*\n\nTap the button below to share your phone number.",
@@ -839,18 +838,27 @@ TEXTS = {
         "dev_panel": "👑 *Developer Control Panel*\n\nWelcome, Great Developer!\n\nSelect an option below:",
         "dev_users_list": "👥 *Users List*\n\nTotal Users: {total}\n\n{users_list}",
         "dev_no_users": "📭 No registered users.",
-        "dev_ban_prompt": "🚫 *Ban User*\n\nSend the user ID you want to ban:",
-        "dev_unban_prompt": "✅ *Unban User*\n\nSend the user ID you want to unban:",
         "dev_ban_success": "✅ User `{user_id}` has been banned successfully.",
-        "dev_ban_fail": "❌ Failed to ban user. Make sure the ID is correct.",
+        "dev_ban_fail": "❌ Failed to ban user.",
         "dev_unban_success": "✅ User `{user_id}` has been unbanned successfully.",
-        "dev_unban_fail": "❌ Failed to unban user. Make sure the ID is correct.",
+        "dev_unban_fail": "❌ Failed to unban user.",
         "dev_all_data": "📊 *All Users Data*\n\n{data}",
         "btn_users_count": "👥 Users Count",
         "btn_ban_user": "🚫 Ban User",
         "btn_unban_user": "✅ Unban User",
         "btn_all_data": "📊 All Data",
-        "btn_back": "🔙 Back"
+        "btn_back": "🔙 Back",
+        "select_user": "👤 Select user:",
+        "confirm_ban": "⚠️ Do you want to ban user {user_info}?",
+        "confirm_unban": "⚠️ Do you want to unban user {user_info}?",
+        "confirm_yes": "✅ Yes",
+        "confirm_no": "❌ No",
+        "user_banned_success": "✅ User {user_info} has been banned successfully",
+        "user_unbanned_success": "✅ User {user_info} has been unbanned successfully",
+        "user_details": "📋 *User Details*\n\n🆔 ID: {id}\n📛 Name: {name}\n🔖 Username: {username}\n📞 Phone: {phone}\n📅 Registered: {date}\n{'🚫 Banned' if banned else '✅ Active'}",
+        "click_message_button": "📨 Click any button to view message details",
+        "view_message": "📄 Message from {from_addr}",
+        "no_messages_inbox": "📭 No messages in this inbox"
     }
 }
 
@@ -861,7 +869,7 @@ def get_text(telegram_id: int, key: str, **kwargs) -> str:
 
 # ================= أوامر البوت =================
 async def set_commands(app: Application):
-    commands = [
+    user_commands = [
         BotCommand("start", "Start MR Email Bot"),
         BotCommand("phone", "Register your phone number"),
         BotCommand("generate", "Create new temporary email"),
@@ -873,7 +881,18 @@ async def set_commands(app: Application):
         BotCommand("domains", "Show all domains"),
         BotCommand("language", "Change language"),
     ]
-    await app.bot.set_my_commands(commands)
+    
+    dev_extra_commands = [
+        BotCommand("mydeveloper", "👑 Developer Control Panel"),
+        BotCommand("monitor", "📊 Monitor Dashboard"),
+    ]
+    
+    try:
+        dev_commands = user_commands + dev_extra_commands
+        await app.bot.set_my_commands(dev_commands)
+    except Exception as e:
+        full_commands = user_commands + dev_extra_commands
+        await app.bot.set_my_commands(full_commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -881,6 +900,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if is_user_banned(uid):
         await update.message.reply_text(BAN_MESSAGE, parse_mode="Markdown")
+        return
+    
+    lang = get_user_lang(uid)
+    user_data = get_user_data(uid)
+    
+    if user_data is None or lang not in ["ar", "en"]:
+        keyboard = [
+            [InlineKeyboardButton("العربية 🇸🇦", callback_data="first_lang_ar")],
+            [InlineKeyboardButton("English 🇬🇧", callback_data="first_lang_en")],
+        ]
+        await update.message.reply_text(
+            "🌐 Choose your language / اختر لغتك:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        user_lang_pending[uid] = True
         return
     
     if is_user_registered(uid):
@@ -896,10 +930,12 @@ async def phone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(BAN_MESSAGE, parse_mode="Markdown")
         return
     
-    keyboard = [[{"text": "📱 Share Phone Number", "request_contact": True}]]
-    reply_markup = {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": True}
-    
-    await update.message.reply_text(get_text(uid, "phone_prompt"), reply_markup=reply_markup)
+    if not is_user_registered(uid):
+        keyboard = [[{"text": "📱 Share Phone Number", "request_contact": True}]]
+        reply_markup = {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": True}
+        await update.message.reply_text(get_text(uid, "phone_prompt"), reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(get_text(uid, "welcome"))
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -926,29 +962,36 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = get_text(uid, "phone_saved", name=name, username=f"@{username}" if username != "No Username" else username, phone=phone, date=reg_date)
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=remove_keyboard)
 
+# ================= أوامر المطور =================
 async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     
     if uid != DEV_ID:
-        await update.message.reply_text(get_text(uid, "not_authorized"))
+        await update.message.reply_text(get_text(uid, "not_authorized"), parse_mode="Markdown")
         return
     
     monitor_link = "http://localhost:8080"
+    health_link = f"{monitor_link}/health"
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 Open Dashboard", url=monitor_link)],
+        [InlineKeyboardButton("🔍 Open Health Page", url=health_link)],
+        [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
+    ]
+    
     await update.message.reply_text(
-        f"📊 *رابط مراقبة البوت*\n\n"
-        f"🌐 {monitor_link}\n"
-        f"🔍 {monitor_link}/health\n\n"
-        f"📌 *استخدام الرابط:*\n"
-        f"• افتح الرابط في المتصفح لرؤية لوحة التحكم\n"
-        f"• استخدم /health لجلب حالة البوت بصيغة JSON",
+        f"📊 *Bot Monitor Links*\n\n"
+        f"Click the buttons below to open the links:\n\n"
+        f"📌 *Note:* Links will open in your browser",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-async def my_developer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def mydeveloper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     
     if uid != DEV_ID:
-        await update.message.reply_text(get_text(uid, "not_authorized"))
+        await update.message.reply_text(get_text(uid, "not_authorized"), parse_mode="Markdown")
         return
     
     keyboard = [
@@ -985,7 +1028,7 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton(get_text(uid, "back"), callback_data="back_main")])
+    keyboard.append([InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")])
     await update.message.reply_text(
         get_text(uid, "choose_domain"),
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -1011,6 +1054,7 @@ async def show_emails(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for e in emails:
         keyboard.append([InlineKeyboardButton(e['email'], callback_data=f"view_{e['id']}")])
+    keyboard.append([InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")])
     await update.message.reply_text(
         get_text(uid, "emails_list"),
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1053,6 +1097,7 @@ async def fetch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for e in emails:
         keyboard.append([InlineKeyboardButton(f"{get_text(uid, 'fetch_button')} {e['email']}", callback_data=f"fetch_{e['id']}")])
+    keyboard.append([InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")])
     await update.message.reply_text(
         get_text(uid, "fetch_select"),
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1077,6 +1122,7 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for e in emails:
         keyboard.append([InlineKeyboardButton(f"{get_text(uid, 'delete_button')} {e['email']}", callback_data=f"del_{e['id']}")])
+    keyboard.append([InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")])
     await update.message.reply_text(
         get_text(uid, "delete_select"),
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1148,6 +1194,7 @@ async def language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("العربية 🇸🇦", callback_data="lang_ar")],
         [InlineKeyboardButton("English 🇬🇧", callback_data="lang_en")],
+        [InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")]
     ]
     await update.message.reply_text("🌐 Choose language / اختر اللغة:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -1201,6 +1248,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BOT_STATUS["last_activity"] = datetime.now()
     data = query.data
     
+    # معالجة اختيار اللغة الأولية
+    if data == "first_lang_ar":
+        set_user_lang(uid, "ar")
+        user_lang_pending.pop(uid, None)
+        await query.edit_message_text(get_text(uid, "lang_changed"))
+        await query.message.reply_text(get_text(uid, "need_phone"))
+        return
+    elif data == "first_lang_en":
+        set_user_lang(uid, "en")
+        user_lang_pending.pop(uid, None)
+        await query.edit_message_text(get_text(uid, "lang_changed"))
+        await query.message.reply_text(get_text(uid, "need_phone"))
+        return
+    
+    # للمستخدمين المحظورين (ما عدا المطور)
     if uid != DEV_ID and is_user_banned(uid):
         await query.edit_message_text(BAN_MESSAGE, parse_mode="Markdown")
         return
@@ -1227,55 +1289,199 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text(get_text(uid, "welcome"))
         return
+    
+    if data == "back_to_main":
+        await query.edit_message_text(get_text(uid, "welcome"))
+        return
 
+    # ================= دوال المطور =================
     if uid == DEV_ID:
         if data == "dev_users_count":
             users = get_all_users()
-            total = len([u for u in users if u.get("banned", 0) == 0])
-            banned = len([u for u in users if u.get("banned", 0) == 1])
+            total = len([u for u in users if u.get("banned", 0) == 0 and u["telegram_id"] != DEV_ID])
+            banned = len([u for u in users if u.get("banned", 0) == 1 and u["telegram_id"] != DEV_ID])
             
             if users:
-                users_list = ""
-                for u in users[:20]:
-                    status = "🚫" if u.get("banned", 0) == 1 else "✅"
-                    users_list += f"{status} `{u['telegram_id']}` - {u.get('name', 'Unknown')}\n"
+                keyboard = []
+                for u in users:
+                    if u["telegram_id"] == DEV_ID:
+                        continue
+                    status = "✅" if u.get("banned", 0) == 0 else "🚫"
+                    btn_text = f"{status} {u['telegram_id']} - {u.get('name', 'Unknown')}"
+                    keyboard.append([InlineKeyboardButton(btn_text[:60], callback_data=f"user_detail_{u['telegram_id']}")])
+                keyboard.append([InlineKeyboardButton(get_text(uid, "btn_back"), callback_data="back_main")])
                 
-                text = get_text(uid, "dev_users_list", total=total, users_list=users_list)
-                text += f"\n\n🚫 المحظورين: {banned}"
+                await query.edit_message_text(
+                    get_text(uid, "select_user"),
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
             else:
-                text = get_text(uid, "dev_no_users")
-            
-            await query.edit_message_text(text, parse_mode="Markdown")
+                await query.edit_message_text(get_text(uid, "dev_no_users"))
             return
         
         elif data == "dev_ban_user":
-            context.user_data["dev_action"] = "ban"
-            await query.edit_message_text(get_text(uid, "dev_ban_prompt"), parse_mode="Markdown")
+            active_users = get_active_users()
+            if not active_users:
+                await query.edit_message_text("📭 No active users to ban")
+                return
+            
+            keyboard = []
+            for u in active_users:
+                if u["telegram_id"] == DEV_ID:
+                    continue
+                btn_text = f"✅ {u['telegram_id']} - {u.get('name', 'Unknown')}"
+                keyboard.append([InlineKeyboardButton(btn_text[:60], callback_data=f"confirm_ban_{u['telegram_id']}")])
+            keyboard.append([InlineKeyboardButton(get_text(uid, "btn_back"), callback_data="back_main")])
+            
+            await query.edit_message_text(
+                get_text(uid, "select_user"),
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
             return
         
         elif data == "dev_unban_user":
-            context.user_data["dev_action"] = "unban"
-            await query.edit_message_text(get_text(uid, "dev_unban_prompt"), parse_mode="Markdown")
+            banned_users = get_banned_users()
+            if not banned_users:
+                await query.edit_message_text("📭 No banned users")
+                return
+            
+            keyboard = []
+            for u in banned_users:
+                if u["telegram_id"] == DEV_ID:
+                    continue
+                btn_text = f"🚫 {u['telegram_id']} - {u.get('name', 'Unknown')}"
+                keyboard.append([InlineKeyboardButton(btn_text[:60], callback_data=f"confirm_unban_{u['telegram_id']}")])
+            keyboard.append([InlineKeyboardButton(get_text(uid, "btn_back"), callback_data="back_main")])
+            
+            await query.edit_message_text(
+                get_text(uid, "select_user"),
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
             return
         
         elif data == "dev_all_data":
             users = get_all_users()
             if users:
-                data_text = ""
+                data_text = "📊 *جميع بيانات المستخدمين*\n\n"
                 for u in users:
-                    data_text += f"🆔 {u['telegram_id']}\n"
-                    data_text += f"📛 {u.get('name', 'Unknown')}\n"
-                    data_text += f"🔖 {u.get('username', 'No Username')}\n"
-                    data_text += f"📞 {u.get('phone', 'No Phone')}\n"
-                    data_text += f"📅 {u.get('reg_date', 'Unknown')}\n"
-                    data_text += f"{'🚫 محظور' if u.get('banned', 0) == 1 else '✅ نشط'}\n"
-                    data_text += "─" * 20 + "\n"
+                    data_text += f"━━━━━━━━━━━━━━━━━━━━\n"
+                    data_text += f"🆔 *المعرف:* `{u['telegram_id']}`\n"
+                    data_text += f"📛 *الاسم:* {u.get('name', 'غير معروف')}\n"
+                    data_text += f"🔖 *اليوزر:* @{u.get('username', 'لا يوجد')}\n"
+                    data_text += f"📞 *الهاتف:* `{u.get('phone', 'غير مسجل')}`\n"
+                    data_text += f"📅 *التسجيل:* {u.get('reg_date', 'غير معروف')}\n"
+                    status = "🚫 محظور" if u.get('banned', 0) == 1 else "✅ نشط"
+                    data_text += f"📌 *الحالة:* {status}\n"
+                    if u.get('telegram_id') == DEV_ID:
+                        data_text += f"👑 *مطور النظام*\n"
+                    data_text += "\n"
                 
-                await query.edit_message_text(get_text(uid, "dev_all_data", data=data_text), parse_mode="Markdown")
+                # إذا كان النص طويلاً جداً، نقسمه
+                if len(data_text) > 4000:
+                    await query.edit_message_text(data_text[:4000] + "\n\n... (تم اختصار الباقي)", parse_mode="Markdown")
+                    remaining = data_text[4000:]
+                    if remaining:
+                        await query.message.reply_text(remaining[:4000], parse_mode="Markdown")
+                else:
+                    await query.edit_message_text(data_text, parse_mode="Markdown")
             else:
-                await query.edit_message_text(get_text(uid, "dev_no_users"))
+                await query.edit_message_text("📭 لا يوجد مستخدمين مسجلين")
+            return
+        
+        # معالجة تأكيد الحظر
+        elif data.startswith("confirm_ban_"):
+            target_id = int(data.split("_")[2])
+            if target_id == DEV_ID:
+                await query.edit_message_text("❌ You cannot ban yourself!")
+                return
+            user_data = get_user_data(target_id)
+            if user_data:
+                user_info = f"`{target_id}` - {user_data.get('name', 'Unknown')}"
+                keyboard = [
+                    [InlineKeyboardButton(get_text(uid, "confirm_yes"), callback_data=f"execute_ban_{target_id}")],
+                    [InlineKeyboardButton(get_text(uid, "confirm_no"), callback_data="dev_ban_user")],
+                    [InlineKeyboardButton(get_text(uid, "btn_back"), callback_data="dev_ban_user")]
+                ]
+                await query.edit_message_text(
+                    get_text(uid, "confirm_ban", user_info=user_info),
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+            return
+        
+        elif data.startswith("execute_ban_"):
+            target_id = int(data.split("_")[2])
+            if target_id == DEV_ID:
+                await query.edit_message_text("❌ You cannot ban yourself!")
+                return
+            user_data = get_user_data(target_id)
+            if user_data and ban_user(target_id):
+                user_info = f"`{target_id}` - {user_data.get('name', 'Unknown')}"
+                await query.edit_message_text(
+                    get_text(uid, "user_banned_success", user_info=user_info),
+                    parse_mode="Markdown"
+                )
+                try:
+                    await context.bot.send_message(target_id, BAN_MESSAGE, parse_mode="Markdown")
+                except:
+                    pass
+            else:
+                await query.edit_message_text(get_text(uid, "dev_ban_fail"))
+            return
+        
+        # معالجة تأكيد إلغاء الحظر
+        elif data.startswith("confirm_unban_"):
+            target_id = int(data.split("_")[2])
+            user_data = get_user_data(target_id)
+            if user_data:
+                user_info = f"`{target_id}` - {user_data.get('name', 'Unknown')}"
+                keyboard = [
+                    [InlineKeyboardButton(get_text(uid, "confirm_yes"), callback_data=f"execute_unban_{target_id}")],
+                    [InlineKeyboardButton(get_text(uid, "confirm_no"), callback_data="dev_unban_user")],
+                    [InlineKeyboardButton(get_text(uid, "btn_back"), callback_data="dev_unban_user")]
+                ]
+                await query.edit_message_text(
+                    get_text(uid, "confirm_unban", user_info=user_info),
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+            return
+        
+        elif data.startswith("execute_unban_"):
+            target_id = int(data.split("_")[2])
+            user_data = get_user_data(target_id)
+            if user_data and unban_user(target_id):
+                user_info = f"`{target_id}` - {user_data.get('name', 'Unknown')}"
+                await query.edit_message_text(
+                    get_text(uid, "user_unbanned_success", user_info=user_info),
+                    parse_mode="Markdown"
+                )
+                try:
+                    await context.bot.send_message(target_id, "✅ Your ban has been lifted, you can now use the bot again")
+                except:
+                    pass
+            else:
+                await query.edit_message_text(get_text(uid, "dev_unban_fail"))
+            return
+        
+        elif data.startswith("user_detail_"):
+            target_id = int(data.split("_")[2])
+            user_data = get_user_data(target_id)
+            if user_data:
+                banned = user_data.get("banned", 0) == 1
+                text = get_text(uid, "user_details",
+                               id=target_id,
+                               name=user_data.get("name", "Unknown"),
+                               username=user_data.get("username", "No Username"),
+                               phone=user_data.get("phone", "No Phone"),
+                               date=user_data.get("reg_date", "Unknown"),
+                               banned=banned)
+                keyboard = [[InlineKeyboardButton(get_text(uid, "btn_back"), callback_data="dev_users_count")]]
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
             return
 
+    # ================= باقي الكود للبريد المؤقت =================
     if not is_user_registered(uid):
         await query.edit_message_text(get_text(uid, "need_phone"))
         return
@@ -1288,7 +1494,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton(get_text(uid, "type_with_numbers"), callback_data="gen_with_numbers")],
             [InlineKeyboardButton(get_text(uid, "type_without_numbers"), callback_data="gen_without_numbers")],
-            [InlineKeyboardButton(get_text(uid, "back"), callback_data="back_main")]
+            [InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")]
         ]
         await query.edit_message_text(
             get_text(uid, "choose_type"),
@@ -1366,12 +1572,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if not messages:
                         await query.edit_message_text(get_text(uid, "inbox_empty", email=email), parse_mode="Markdown")
                         return
-                    text = get_text(uid, "inbox_messages", email=email)
-                    for i, m in enumerate(messages[:5], 1):
-                        text += f"\n*{i}.* From: {m['from_mail'][:30]}\n   Subject: {m['subject'][:40]}\n"
-                    text += get_text(uid, "view_latest_hint")
-                    await query.edit_message_text(text, parse_mode="Markdown")
-                    for m in messages[:5]:
+                    
+                    keyboard = []
+                    for i, m in enumerate(messages[:10], 1):
+                        btn_text = f"📨 {m['subject'][:40]} - {m['from_mail'][:20]}"
+                        keyboard.append([InlineKeyboardButton(btn_text[:60], callback_data=f"msg1_{m['mail_id']}_{email}")])
+                    keyboard.append([InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")])
+                    
+                    await query.edit_message_text(
+                        get_text(uid, "click_message_button"),
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode="Markdown"
+                    )
+                    
+                    for m in messages[:10]:
                         content = src1_get_message_content(email, m["mail_id"])
                         if content:
                             save_inbox_message(uid, email, source, content.get("from_mail",""), content.get("subject",""), content.get("text",""), mid=m["mail_id"])
@@ -1380,16 +1594,60 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if not messages:
                         await query.edit_message_text(get_text(uid, "inbox_empty", email=email), parse_mode="Markdown")
                         return
-                    text = get_text(uid, "inbox_messages", email=email)
-                    for i, m in enumerate(messages[:5], 1):
-                        text += f"\n*{i}.* From: {m['f'][:30]}\n   Subject: {m['s'][:40]}\n"
-                    text += get_text(uid, "view_latest_hint")
-                    await query.edit_message_text(text, parse_mode="Markdown")
-                    for m in messages[:5]:
+                    
+                    keyboard = []
+                    for i, m in enumerate(messages[:10], 1):
+                        btn_text = f"📨 {m['s'][:40]} - {m['f'][:20]}"
+                        keyboard.append([InlineKeyboardButton(btn_text[:60], callback_data=f"msg2_{m['uid']}_{email}")])
+                    keyboard.append([InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")])
+                    
+                    await query.edit_message_text(
+                        get_text(uid, "click_message_button"),
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode="Markdown"
+                    )
+                    
+                    for m in messages[:10]:
                         content = src2_get_message_content(m["uid"])
                         if content:
                             save_inbox_message(uid, email, source, content.get("f",""), content.get("s",""), content.get("text",""), uid=m["uid"])
                 return
+
+    # معالجة عرض تفاصيل الرسالة (src1)
+    if data.startswith("msg1_"):
+        parts = data.split("_")
+        if len(parts) >= 3:
+            mail_id = int(parts[1])
+            email = "_".join(parts[2:])
+            content = src1_get_message_content(email, mail_id)
+            if content:
+                text = get_text(uid, "message_detail",
+                                from_addr=content.get("from_mail", "?"),
+                                subject=content.get("subject", "?"),
+                                body=content.get("text", "")[:1000])
+                keyboard = [[InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")]]
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            else:
+                await query.edit_message_text(get_text(uid, "no_messages_inbox"))
+        return
+    
+    # معالجة عرض تفاصيل الرسالة (src2)
+    if data.startswith("msg2_"):
+        parts = data.split("_")
+        if len(parts) >= 3:
+            uid_msg = parts[1]
+            email = "_".join(parts[2:])
+            content = src2_get_message_content(uid_msg)
+            if content:
+                text = get_text(uid, "message_detail",
+                                from_addr=content.get("f", "?"),
+                                subject=content.get("s", "?"),
+                                body=content.get("text", "")[:1000])
+                keyboard = [[InlineKeyboardButton(get_text(uid, "back"), callback_data="back_to_main")]]
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            else:
+                await query.edit_message_text(get_text(uid, "no_messages_inbox"))
+        return
 
     if data.startswith("del_"):
         eid = int(data.split("_")[1])
@@ -1408,6 +1666,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.edit_message_text(get_text(uid, "delete_fail"))
                 return
 
+# ================= معالجة رسائل المطور (نصي) =================
 async def handle_dev_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     
@@ -1421,32 +1680,36 @@ async def handle_dev_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             target_id = int(text)
         except ValueError:
-            await update.message.reply_text("❌ يرجى إرسال معرف مستخدم صحيح (أرقام فقط)")
+            await update.message.reply_text("❌ Please send a valid user ID (numbers only)")
             return
         
         if action == "ban":
+            if target_id == DEV_ID:
+                await update.message.reply_text("❌ You cannot ban yourself!")
+                return
             if ban_user(target_id):
-                await update.message.reply_text(f"✅ تم حظر المستخدم `{target_id}` بنجاح")
+                await update.message.reply_text(f"✅ User `{target_id}` has been banned successfully")
                 try:
                     await context.bot.send_message(target_id, BAN_MESSAGE, parse_mode="Markdown")
                 except:
                     pass
             else:
-                await update.message.reply_text(f"❌ فشل حظر المستخدم `{target_id}`")
+                await update.message.reply_text(f"❌ Failed to ban user `{target_id}`")
         elif action == "unban":
             if unban_user(target_id):
-                await update.message.reply_text(f"✅ تم إلغاء حظر المستخدم `{target_id}` بنجاح")
+                await update.message.reply_text(f"✅ User `{target_id}` has been unbanned successfully")
                 try:
-                    await context.bot.send_message(target_id, "✅ تم إلغاء حظرك يمكنك استخدام البوت مرة أخرى")
+                    await context.bot.send_message(target_id, "✅ Your ban has been lifted, you can now use the bot again")
                 except:
                     pass
             else:
-                await update.message.reply_text(f"❌ فشل إلغاء حظر المستخدم `{target_id}`")
+                await update.message.reply_text(f"❌ Failed to unban user `{target_id}`")
         
         context.user_data["dev_action"] = None
 
 # ================= التشغيل =================
 def main():
+    # طباعة البانر الجبار
     print(f"""{Y}
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
@@ -1464,17 +1727,18 @@ def main():
 {G}              ██████╔╝╚██████╔╝   ██║                        ║
 {G}              ╚═════╝  ╚═════╝    ╚═╝                        ║
 {Y}                                                              ║
-{Y}                       MR EMAIL BOT v4.0                      ║
-{Y}                    ULTIMATE EDITION + DEV PANEL              ║
+{Y}                       MR EMAIL BOT v5.0                      ║
+{Y}                 ULTIMATE EDITION + INTERACTIVE UI            ║
 ╚══════════════════════════════════════════════════════════════╝{RESET}""")
     print(f"{C}╔══════════════════════════════════════════════════════════════╗")
     print(f"{C}║ {W}DEV      : {Y}@MR_Tails_YE                                              {C}║")
     print(f"{C}║ {W}TARGET   : {Y}TEMPORARY EMAIL + {len(get_all_domains())} DOMAINS + USER SYSTEM         {C}║")
-    print(f"{C}║ {W}ENGINE   : {Y}STEALTH MODE + HIDDEN SOURCES + DEV CONTROL            {C}║")
+    print(f"{C}║ {W}ENGINE   : {Y}STEALTH MODE + HIDDEN SOURCES + INTERACTIVE UI           {C}║")
     print(f"{C}║ {W}MONITOR  : {Y}http://localhost:8080                                      {C}║")
     print(f"{C}║ {W}HEALTH   : {Y}http://localhost:8080/health                               {C}║")
     print(f"{C}╚══════════════════════════════════════════════════════════════╝{RESET}\n")
 
+    # التحقق من وجود قاعدة بيانات قديمة وترقيتها
     if os.path.exists(DB_PATH):
         try:
             with sqlite3.connect(DB_PATH) as conn:
@@ -1490,25 +1754,21 @@ def main():
     
     update_bot_stats()
 
+    # تشغيل خادم المراقبة
     monitor_thread = threading.Thread(target=run_monitor_server, daemon=True)
     monitor_thread.start()
     print(f"{G}✅ Monitor server started on http://localhost:8080{RESET}")
     
+    # تشغيل فحص APIs
     api_check_thread = threading.Thread(target=check_apis_status, daemon=True)
     api_check_thread.start()
     print(f"{G}✅ API monitoring started (sources hidden){RESET}")
 
-    # إنشاء التطبيق مع إعدادات timeout محسنة
-    telegram_request = create_telegram_request()
-    
-    if telegram_request:
-        app = Application.builder().token(TOKEN).request(telegram_request).build()
-    else:
-        app = Application.builder().token(TOKEN).build()
-        print(f"{Y}⚠️ باستخدام الإعدادات الافتراضية للاتصال{RESET}")
-    
+    # إنشاء التطبيق
+    app = Application.builder().token(TOKEN).build()
     app.post_init = set_commands
 
+    # أوامر البوت
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("phone", phone_command))
     app.add_handler(CommandHandler("generate", generate))
@@ -1520,24 +1780,23 @@ def main():
     app.add_handler(CommandHandler("domains", domains))
     app.add_handler(CommandHandler("language", language))
     
-    app.add_handler(CommandHandler("Mydeveloper", my_developer))
+    # أوامر المطور (الأسماء كلها صغيرة)
+    app.add_handler(CommandHandler("mydeveloper", mydeveloper))
     app.add_handler(CommandHandler("monitor", monitor))
     
+    # معالجات إضافية
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.TEXT & filters.COMMAND, handle_dev_text))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
-    print(f"{G}✅ MR Email Bot is running! (All sources hidden){RESET}")
-    print(f"{C}👑 Developer commands: /Mydeveloper , /monitor (hidden from users){RESET}")
+    print(f"{G}✅ MR Email Bot v5.0 is running! (Interactive UI){RESET}")
+    print(f"{C}👑 Developer commands: /mydeveloper , /monitor (12 commands total){RESET}")
     print(f"{C}📊 Monitor URL: http://localhost:8080{RESET}")
-    print(f"{Y}💡 Users must register with /phone first{RESET}\n")
+    print(f"{Y}💡 Users must register with /phone first{RESET}")
+    print(f"{Y}🎯 New Features: Interactive message buttons, User selection buttons, Language first{RESET}\n")
     
-    try:
-        app.run_polling()
-    except Exception as e:
-        print(f"{R}❌ خطأ في تشغيل البوت: {e}{RESET}")
-        print(f"{Y}⚠️ تأكد من اتصال الإنترنت وعدم حظر التطبيق{RESET}")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
