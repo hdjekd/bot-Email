@@ -372,7 +372,7 @@ W = '\033[97m'
 RESET = '\033[0m'
 
 # ================= توكن البوت =================
-TOKEN = "8513010794:AAH9_FatomlJIIPbCBajnYuRhYy2BcqwBxY"
+TOKEN = "8247787064:AAGkR9W7uj5NklpEnA1M-lZ4R1XDb-qTjrg"
 
 # ================= جميع الدومينات =================
 SOURCE1_DOMAINS = [
