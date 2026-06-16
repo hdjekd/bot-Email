@@ -725,8 +725,8 @@ def save_inbox_message(telegram_id: int, email: str, source: str, from_email: st
         """, (telegram_id, email, source, from_email, subject, body, uid, mid))
     update_bot_stats()
 
-# رسالة الحظر الثابتة
-BAN_MESSAGE = """🚫 *لقد تم حظرك من استخدام البوت*
+# رسالة الحظر الثابتة (تم التعديل)
+BAN_MESSAGE = """🫣 لقد تم حظرك من استخدام البوت
 
 ⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎
 
@@ -745,7 +745,7 @@ def get_domains_list_text(uid: int) -> str:
 
 TEXTS = {
     "ar": {
-        "welcome": f"✨ مرحباً بك في بوت MR Email!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nبريد مؤقت خارق يدعم العديد من الدومينات.\nDEV: @MR_Tails_YE",
+        "welcome": f"🫣 مرحباً بك في بوت MR Email!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nبريد مؤقت خارق يدعم العديد من الدومينات.\nDEV: @MR_Tails_YE",
         "need_phone": "📱 *يرجى تسجيل رقم هاتفك أولاً*\n\nاستخدم الأمر /phone لمشاركة رقم هاتفك والتحقق من حسابك.",
         "banned": BAN_MESSAGE,
         "phone_prompt": "📱 *يرجى مشاركة رقم هاتفك للتحقق من حسابك*\n\nاضغط على الزر أدناه لمشاركة رقم هاتفك.",
@@ -803,7 +803,7 @@ TEXTS = {
         "no_messages_inbox": "📭 لا توجد رسائل في هذا البريد"
     },
     "en": {
-        "welcome": f"✨ Welcome to MR Email Bot!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nPowerful temporary email with many domains.\nDEV: @MR_Tails_YE",
+        "welcome": f"🫣 Welcome to MR Email Bot!\n⤏͟͟͞͞༒⃝Ꭲ̴Ꭼ̴Ꭱ̴Ꮇ̴Ꮜ̴᙭̴♛Ꮎ̴Ꮩ̴Ꭼ̴Ꭱ̴Ꮮ̴Ꮎ̴Ꭱ̴Ꭰ̴༒⃟࿗⃝⏤͟͞➤⃟☠︎︎\n\nPowerful temporary email with many domains.\nDEV: @MR_Tails_YE",
         "need_phone": "📱 *Please register your phone number first*\n\nUse /phone command to share your phone number and verify your account.",
         "banned": BAN_MESSAGE,
         "phone_prompt": "📱 *Please share your phone number to verify your account*\n\nTap the button below to share your phone number.",
@@ -970,19 +970,22 @@ async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text(uid, "not_authorized"), parse_mode="Markdown")
         return
     
+    # الحصول على الرابط المحلي للمراقبة
     monitor_link = "http://localhost:8080"
-    health_link = f"{monitor_link}/health"
-    
+    # استخدام رابط يظهر للمستخدم ولكن لا يمكن فتحه في التليجرام، نعرضه كنص قابل للنسخ
     keyboard = [
-        [InlineKeyboardButton("📊 Open Dashboard", url=monitor_link)],
-        [InlineKeyboardButton("🔍 Open Health Page", url=health_link)],
-        [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
+        [InlineKeyboardButton("📊 عرض لوحة التحكم (نسخ الرابط)", callback_data="copy_monitor_link")],
+        [InlineKeyboardButton("🔍 عرض حالة الصحة (نسخ الرابط)", callback_data="copy_health_link")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
     ]
     
+    # إرسال النص مع الروابط للنسخ
     await update.message.reply_text(
-        f"📊 *Bot Monitor Links*\n\n"
-        f"Click the buttons below to open the links:\n\n"
-        f"📌 *Note:* Links will open in your browser",
+        f"📊 *روابط المراقبة*\n\n"
+        f"لنسخ الرابط، اضغط مع الاستمرار ثم اختر نسخ:\n\n"
+        f"📌 *لوحة التحكم:*\n`{monitor_link}`\n\n"
+        f"📌 *حالة الصحة:*\n`{monitor_link}/health`\n\n"
+        f"يمكنك فتح الرابط في متصفحك بعد النسخ.",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
@@ -1248,6 +1251,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BOT_STATUS["last_activity"] = datetime.now()
     data = query.data
     
+    # معالجة الروابط للنسخ
+    if data == "copy_monitor_link":
+        await query.edit_message_text(
+            "📊 *لوحة التحكم*\n\n"
+            "لنسخ الرابط، اضغط مع الاستمرار ثم اختر نسخ:\n\n"
+            "`http://localhost:8080`\n\n"
+            "بعد النسخ، افتح الرابط في متصفحك.",
+            parse_mode="Markdown"
+        )
+        return
+    elif data == "copy_health_link":
+        await query.edit_message_text(
+            "🔍 *حالة الصحة*\n\n"
+            "لنسخ الرابط، اضغط مع الاستمرار ثم اختر نسخ:\n\n"
+            "`http://localhost:8080/health`\n\n"
+            "بعد النسخ، افتح الرابط في متصفحك.",
+            parse_mode="Markdown"
+        )
+        return
+    
     # معالجة اختيار اللغة الأولية
     if data == "first_lang_ar":
         set_user_lang(uid, "ar")
@@ -1363,34 +1386,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "dev_all_data":
             users = get_all_users()
             if users:
-                data_text = "📊 *جميع بيانات المستخدمين*\n\n"
+                # استخدام text عادي بدون Markdown معقد لتجنب الأخطاء
+                data_text = "📊 جميع بيانات المستخدمين\n\n"
                 for u in users:
-                    data_text += f"━━━━━━━━━━━━━━━━━━━━\n"
-                    data_text += f"🆔 *المعرف:* `{u['telegram_id']}`\n"
-                    data_text += f"📛 *الاسم:* {u.get('name', 'غير معروف')}\n"
-                    data_text += f"🔖 *اليوزر:* @{u.get('username', 'لا يوجد')}\n"
-                    data_text += f"📞 *الهاتف:* `{u.get('phone', 'غير مسجل')}`\n"
-                    data_text += f"📅 *التسجيل:* {u.get('reg_date', 'غير معروف')}\n"
+                    data_text += "═" * 20 + "\n"
+                    data_text += f"🆔 المعرف: {u['telegram_id']}\n"
+                    data_text += f"📛 الاسم: {u.get('name', 'غير معروف')}\n"
+                    data_text += f"🔖 اليوزر: @{u.get('username', 'لا يوجد')}\n"
+                    data_text += f"📞 الهاتف: {u.get('phone', 'غير مسجل')}\n"
+                    data_text += f"📅 التسجيل: {u.get('reg_date', 'غير معروف')}\n"
                     status = "🚫 محظور" if u.get('banned', 0) == 1 else "✅ نشط"
-                    data_text += f"📌 *الحالة:* {status}\n"
+                    data_text += f"📌 الحالة: {status}\n"
                     if u.get('telegram_id') == DEV_ID:
-                        data_text += f"👑 *مطور النظام*\n"
+                        data_text += "👑 مطور النظام\n"
                     data_text += "\n"
                 
-                # إذا كان النص طويلاً جداً، نقسمه
+                # إرسال النص بدون parse_mode لتجنب مشاكل Markdown
                 if len(data_text) > 4000:
-                    await query.edit_message_text(data_text[:4000] + "\n\n... (تم اختصار الباقي)", parse_mode="Markdown")
+                    await query.edit_message_text(data_text[:4000] + "\n\n... (تم اختصار الباقي)")
                     remaining = data_text[4000:]
                     if remaining:
-                        await query.message.reply_text(remaining[:4000], parse_mode="Markdown")
+                        await query.message.reply_text(remaining[:4000])
                 else:
-                    await query.edit_message_text(data_text, parse_mode="Markdown")
+                    await query.edit_message_text(data_text)
             else:
                 await query.edit_message_text("📭 لا يوجد مستخدمين مسجلين")
             return
         
-        # معالجة تأكيد الحظر
-        elif data.startswith("confirm_ban_"):
+        # معالجة تأكيد الحظر        elif data.startswith("confirm_ban_"):
             target_id = int(data.split("_")[2])
             if target_id == DEV_ID:
                 await query.edit_message_text("❌ You cannot ban yourself!")
@@ -1458,7 +1481,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
                 try:
-                    await context.bot.send_message(target_id, "✅ Your ban has been lifted, you can now use the bot again")
+                    await context.bot.send_message(target_id, "✅ تم إلغاء حظرك، يمكنك الآن استخدام البوت مرة أخرى")
                 except:
                     pass
             else:
@@ -1699,7 +1722,7 @@ async def handle_dev_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if unban_user(target_id):
                 await update.message.reply_text(f"✅ User `{target_id}` has been unbanned successfully")
                 try:
-                    await context.bot.send_message(target_id, "✅ Your ban has been lifted, you can now use the bot again")
+                    await context.bot.send_message(target_id, "✅ تم إلغاء حظرك، يمكنك الآن استخدام البوت مرة أخرى")
                 except:
                     pass
             else:
